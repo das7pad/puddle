@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1440,8 +1441,8 @@ func BenchmarkAcquire_ReleaseAfterAcquire(b *testing.B) {
 	}
 }
 
-func withCPULoad() {
-	// Multiply by 2 to similate overload of the system.
+func withCPULoad(b *testing.B) {
+	// Multiply by 2 to simulate overload of the system.
 	numGoroutines := runtime.NumCPU() * 2
 
 	var wg sync.WaitGroup
@@ -1450,8 +1451,12 @@ func withCPULoad() {
 		go func() {
 			wg.Done()
 
-			// Similate computationally intensive task.
-			for j := 0; true; j++ {
+			// Simulate computationally intensive task.
+			var stop atomic.Bool
+			b.Cleanup(func() {
+				stop.Store(true)
+			})
+			for j := 0; !stop.Load(); j++ {
 			}
 		}()
 	}
@@ -1465,7 +1470,7 @@ func BenchmarkAcquire_ReleaseAfterAcquireWithCPULoad(b *testing.B) {
 	pool := testPool[int32](b)
 	releaseChan := releaser[int32](b)
 
-	withCPULoad()
+	withCPULoad(b)
 
 	res, err := pool.Acquire(ctx)
 	r.NoError(err)
@@ -1524,7 +1529,7 @@ func BenchmarkAcquire_MultipleCancelledWithCPULoad(b *testing.B) {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	cancel()
 
-	withCPULoad()
+	withCPULoad(b)
 
 	res, err := pool.Acquire(ctx)
 	r.NoError(err)
