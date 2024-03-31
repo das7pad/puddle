@@ -80,10 +80,9 @@ func (s *GenStack[T]) NextGen() {
 	//
 	//   New: 8 7 6 5 4 3 2 1
 	//
-	s.new.push(s.old.takeAll()...)
+	s.old.moveAll(s.new)
 
-	// We have the old stack allocated and empty, so why not to reuse it as
-	// new new stack.
+	// We have the old stack allocated and empty, reuse it as new stack.
 	s.old, s.new = s.new, s.old
 }
 

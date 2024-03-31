@@ -42,12 +42,16 @@ func (s *stack[T]) popN(dst []T, n int) {
 	s.arr = s.arr[:s.len()-n]
 }
 
-// takeAll returns all elements in the stack in order as they are stored - i.e.
+// moveAll moves all elements in the stack in order as they are stored - i.e.
 // the top-most stack element is the last one.
-func (s *stack[T]) takeAll() []T {
-	arr := s.arr
-	s.arr = nil
-	return arr
+func (s *stack[T]) moveAll(dst *stack[T]) {
+	dst.arr = append(dst.arr, s.arr...)
+	var zero T
+	for i := 0; i < len(s.arr); i++ {
+		// Avoid memory leak
+		s.arr[i] = zero
+	}
+	s.arr = s.arr[:0]
 }
 
 // len returns number of elements in the stack.
