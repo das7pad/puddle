@@ -1296,6 +1296,8 @@ func BenchmarkPoolAcquireAndRelease(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
+			b.ReportAllocs()
+			b.ResetTimer()
 
 			for i := 0; i < bm.clientCount; i++ {
 				wg.Add(1)
@@ -1400,6 +1402,7 @@ func BenchmarkAcquire_ReleaseAfterAcquire(b *testing.B) {
 	// method will block and this function will never return.
 	defer func() { res.Release() }()
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		releaseChan <- res
@@ -1441,6 +1444,7 @@ func BenchmarkAcquire_ReleaseAfterAcquireWithCPULoad(b *testing.B) {
 	// method will block and this function will never return.
 	defer func() { res.Release() }()
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		releaseChan <- res
@@ -1466,6 +1470,7 @@ func BenchmarkAcquire_MultipleCancelled(b *testing.B) {
 	// method will block and this function will never return.
 	defer func() { res.Release() }()
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < cancelCnt; j++ {
@@ -1498,6 +1503,7 @@ func BenchmarkAcquire_MultipleCancelledWithCPULoad(b *testing.B) {
 	// method will block and this function will never return.
 	defer func() { res.Release() }()
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < cancelCnt; j++ {
