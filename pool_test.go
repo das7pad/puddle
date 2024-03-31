@@ -373,6 +373,35 @@ func TestPoolAcquireAllIdle(t *testing.T) {
 	resources[3].Release()
 }
 
+func BenchmarkAcquireAllIdle(b *testing.B) {
+	for n := 0; n <= 100_000; n += 10_000 {
+		b.Run(strconv.Itoa(n), func(b *testing.B) {
+			constructor, _ := createConstructor()
+			pool, err := puddle.NewPool(&puddle.Config[int]{Constructor: constructor, Destructor: stubDestructor, MaxSize: int32(n + 1)})
+			require.NoError(b, err)
+
+			for j := 0; j < n; j++ {
+				require.NoError(b, pool.CreateResource(context.Background()))
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				got := pool.AcquireAllIdle()
+				if len(got) != n {
+					assert.Len(b, got, n)
+				}
+				for _, r := range got {
+					r.ReleaseUnused()
+				}
+			}
+
+			b.StopTimer()
+			pool.Close()
+		})
+	}
+}
+
 func TestPoolAcquireAllIdleWhenClosedIsNil(t *testing.T) {
 	constructor, _ := createConstructor()
 	pool, err := puddle.NewPool(&puddle.Config[int]{Constructor: constructor, Destructor: stubDestructor, MaxSize: 10})
