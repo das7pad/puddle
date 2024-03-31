@@ -189,6 +189,15 @@ func (p *Pool[T]) Close() {
 	p.closed = true
 	p.cancelBaseAcquireCtx()
 
+	if n := p.idleResources.Len(); n == len(p.allResources) {
+		// fast path: all resources are idle, purge in bulk
+		all := p.idleResources.PopN(n)
+		p.allResources = nil
+		for _, res := range all {
+			go p.destructResourceValue(res.value)
+		}
+	}
+
 	for res, ok := p.idleResources.Pop(); ok; res, ok = p.idleResources.Pop() {
 		p.allResources.remove(res)
 		go p.destructResourceValue(res.value)
