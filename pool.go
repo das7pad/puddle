@@ -7,8 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/sync/semaphore"
-
 	"github.com/jackc/puddle/v2/internal/genstack"
 )
 
@@ -125,9 +123,8 @@ type Pool[T any] struct {
 	// acquireSem provides an allowance to acquire a resource.
 	//
 	// Releases are allowed only when caller holds mux. Acquires have to
-	// happen before mux is locked (doesn't apply to semaphore.TryAcquire in
-	// AcquireAllIdle).
-	acquireSem *semaphore.Weighted
+	// happen before mux is locked (doesn't apply to AcquireAllIdle).
+	acquireSem chan struct{}
 	destructWG sync.WaitGroup
 
 	allResources  resList[T]
@@ -163,9 +160,13 @@ func NewPool[T any](config *Config[T]) (*Pool[T], error) {
 	}
 
 	baseAcquireCtx, cancelBaseAcquireCtx := context.WithCancel(context.Background())
+	acquireSem := make(chan struct{}, config.MaxSize)
+	for i := int32(0); i < config.MaxSize; i++ {
+		acquireSem <- struct{}{}
+	}
 
 	return &Pool[T]{
-		acquireSem:           semaphore.NewWeighted(int64(config.MaxSize)),
+		acquireSem:           acquireSem,
 		idleResources:        genstack.NewGenStack[*Resource[T]](),
 		maxSize:              config.MaxSize,
 		constructor:          config.Constructor,
@@ -304,6 +305,10 @@ func (p *Pool[T]) Stat() *Stat {
 	return s
 }
 
+func (p *Pool[T]) releaseSem() {
+	p.acquireSem <- struct{}{}
+}
+
 // tryAcquireIdleResource checks if there is any idle resource. If there is
 // some, this method removes it from idle list and returns it. If the idle pool
 // is empty, this method returns nil and doesn't modify the idleResources slice.
@@ -365,18 +370,21 @@ func (p *Pool[T]) acquire(ctx context.Context) (*Resource[T], error) {
 	startNano := nanotime()
 
 	var waitedForLock bool
-	if !p.acquireSem.TryAcquire(1) {
+	select {
+	case <-p.acquireSem:
+	default:
 		waitedForLock = true
-		err := p.acquireSem.Acquire(ctx, 1)
-		if err != nil {
+		select {
+		case <-p.acquireSem:
+		case <-ctx.Done():
 			p.canceledAcquireCount.Add(1)
-			return nil, err
+			return nil, ctx.Err()
 		}
 	}
 
 	p.mux.Lock()
 	if p.closed {
-		p.acquireSem.Release(1)
+		p.acquireSem <- struct{}{}
 		p.mux.Unlock()
 		return nil, ErrClosedPool
 	}
@@ -439,7 +447,7 @@ func (p *Pool[T]) initResourceValue(ctx context.Context, res *Resource[T]) (*Res
 			// The resource won't be acquired because its
 			// construction failed. We have to allow someone else to
 			// take that resouce.
-			p.acquireSem.Release(1)
+			p.acquireSem <- struct{}{}
 			p.mux.Unlock()
 
 			select {
@@ -482,7 +490,9 @@ func (p *Pool[T]) initResourceValue(ctx context.Context, res *Resource[T]) (*Res
 // resources are available but the pool has room to grow, a resource will be created in the background. ctx is only
 // used to cancel the background creation.
 func (p *Pool[T]) TryAcquire(ctx context.Context) (*Resource[T], error) {
-	if !p.acquireSem.TryAcquire(1) {
+	select {
+	case <-p.acquireSem:
+	default:
 		return nil, ErrNotAvailable
 	}
 
@@ -490,7 +500,7 @@ func (p *Pool[T]) TryAcquire(ctx context.Context) (*Resource[T], error) {
 	defer p.mux.Unlock()
 
 	if p.closed {
-		p.acquireSem.Release(1)
+		p.acquireSem <- struct{}{}
 		return nil, ErrClosedPool
 	}
 
@@ -514,7 +524,7 @@ func (p *Pool[T]) TryAcquire(ctx context.Context) (*Resource[T], error) {
 		// We have to create the resource and only then release the
 		// semaphore - For the time being there is no resource that
 		// someone could acquire.
-		defer p.acquireSem.Release(1)
+		defer p.releaseSem()
 
 		if err != nil {
 			p.allResources.remove(res)
@@ -533,38 +543,16 @@ func (p *Pool[T]) TryAcquire(ctx context.Context) (*Resource[T], error) {
 // acquireSemAll tries to acquire num free tokens from sem. This function is
 // guaranteed to acquire at least the lowest number of tokens that has been
 // available in the semaphore during runtime of this function.
-//
-// For the time being, semaphore doesn't allow to acquire all tokens atomically
-// (see https://github.com/golang/sync/pull/19). We simulate this by trying all
-// powers of 2 that are less or equal to num.
-//
-// For example, let's immagine we have 19 free tokens in the semaphore which in
-// total has 24 tokens (i.e. the maxSize of the pool is 24 resources). Then if
-// num is 24, the log2Uint(24) is 4 and we try to acquire 16, 8, 4, 2 and 1
-// tokens. Out of those, the acquire of 16, 2 and 1 tokens will succeed.
-//
-// Naturally, Acquires and Releases of the semaphore might take place
-// concurrently. For this reason, it's not guaranteed that absolutely all free
-// tokens in the semaphore will be acquired. But it's guaranteed that at least
-// the minimal number of tokens that has been present over the whole process
-// will be acquired. This is sufficient for the use-case we have in this
-// package.
-//
-// TODO: Replace this with acquireSem.TryAcquireAll() if it gets to
-// upstream. https://github.com/golang/sync/pull/19
-func acquireSemAll(sem *semaphore.Weighted, num int) int {
-	if sem.TryAcquire(int64(num)) {
-		return num
-	}
-
+func acquireSemAll(sem chan struct{}, num int) int {
 	var acquired int
-	for i := int(log2Int(num)); i >= 0; i-- {
-		val := 1 << i
-		if sem.TryAcquire(int64(val)) {
-			acquired += val
+	for i := 0; i < num; i++ {
+		select {
+		case <-sem:
+			acquired++
+		default:
+			return acquired
 		}
 	}
-
 	return acquired
 }
 
@@ -613,19 +601,20 @@ func (p *Pool[T]) AcquireAllIdle() []*Resource[T] {
 // CreateResource constructs a new resource without acquiring it. It goes straight in the IdlePool. If the pool is full
 // it returns an error. It can be useful to maintain warm resources under little load.
 func (p *Pool[T]) CreateResource(ctx context.Context) error {
-	if !p.acquireSem.TryAcquire(1) {
+	select {
+	case <-p.acquireSem:
+	default:
 		return ErrNotAvailable
 	}
+	defer p.releaseSem()
 
 	p.mux.Lock()
 	if p.closed {
-		p.acquireSem.Release(1)
 		p.mux.Unlock()
 		return ErrClosedPool
 	}
 
 	if len(p.allResources) >= int(p.maxSize) {
-		p.acquireSem.Release(1)
 		p.mux.Unlock()
 		return ErrNotAvailable
 	}
@@ -636,7 +625,6 @@ func (p *Pool[T]) CreateResource(ctx context.Context) error {
 	value, err := p.constructor(ctx)
 	p.mux.Lock()
 	defer p.mux.Unlock()
-	defer p.acquireSem.Release(1)
 	if err != nil {
 		p.allResources.remove(res)
 		p.destructWG.Done()
@@ -678,7 +666,7 @@ func (p *Pool[T]) Reset() {
 func (p *Pool[T]) releaseAcquiredResource(res *Resource[T], lastUsedNano int64) {
 	p.mux.Lock()
 	defer p.mux.Unlock()
-	defer p.acquireSem.Release(1)
+	defer p.releaseSem()
 
 	if p.closed || res.poolResetCount != p.resetCount {
 		p.allResources.remove(res)
@@ -697,7 +685,7 @@ func (p *Pool[T]) destroyAcquiredResource(res *Resource[T]) {
 
 	p.mux.Lock()
 	defer p.mux.Unlock()
-	defer p.acquireSem.Release(1)
+	defer p.releaseSem()
 
 	p.allResources.remove(res)
 }
@@ -705,7 +693,7 @@ func (p *Pool[T]) destroyAcquiredResource(res *Resource[T]) {
 func (p *Pool[T]) hijackAcquiredResource(res *Resource[T]) {
 	p.mux.Lock()
 	defer p.mux.Unlock()
-	defer p.acquireSem.Release(1)
+	defer p.releaseSem()
 
 	p.allResources.remove(res)
 	res.status = resourceStatusHijacked

@@ -17,7 +17,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/sync/semaphore"
 
 	"github.com/jackc/puddle/v2"
 )
@@ -1354,15 +1353,22 @@ func BenchmarkPoolAcquireAndRelease(b *testing.B) {
 func TestAcquireAllSem(t *testing.T) {
 	r := require.New(t)
 
-	sem := semaphore.NewWeighted(5)
+	sem := make(chan struct{}, 5)
+	release := func(n int) {
+		for i := 0; i < n; i++ {
+			sem <- struct{}{}
+		}
+	}
+	release(5)
+
 	r.Equal(4, puddle.AcquireSemAll(sem, 4))
-	sem.Release(4)
+	release(4)
 
 	r.Equal(5, puddle.AcquireSemAll(sem, 5))
-	sem.Release(5)
+	release(5)
 
 	r.Equal(5, puddle.AcquireSemAll(sem, 6))
-	sem.Release(5)
+	release(5)
 }
 
 func testPool[T any](t testing.TB) *puddle.Pool[T] {
