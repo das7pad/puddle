@@ -7,8 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jackc/puddle/v2/internal/genstack"
 	"golang.org/x/sync/semaphore"
+
+	"github.com/jackc/puddle/v2/internal/genstack"
 )
 
 const (
@@ -586,11 +587,9 @@ func (p *Pool[T]) AcquireAllIdle() []*Resource[T] {
 	// will take the remaining idle connections.
 	acquired := acquireSemAll(p.acquireSem, numIdle)
 
-	idle := make([]*Resource[T], acquired)
-	for i := range idle {
-		res, _ := p.idleResources.Pop()
-		res.status = resourceStatusAcquired
-		idle[i] = res
+	idle := p.idleResources.PopN(acquired)
+	for i := 0; i < acquired; i++ {
+		idle[i].status = resourceStatusAcquired
 	}
 
 	// We have to bump the generation to ensure that Acquire/TryAcquire

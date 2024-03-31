@@ -88,3 +88,27 @@ func TestGenStack_MuptiGen(t *testing.T) {
 	requirePop(t, s, 15)
 	requirePopEmpty(t, s)
 }
+
+func TestGenStack_PopN(t *testing.T) {
+	r := require.New(t)
+	s := NewGenStack[int]()
+
+	s.Push(10)
+	s.Push(11)
+	s.Push(12)
+	r.Equal(3, s.Len())
+	s.NextGen()
+	r.Equal(3, s.Len())
+	s.Push(13)
+	s.Push(14)
+	r.Equal(5, s.Len())
+	s.NextGen()
+	r.Equal(5, s.Len())
+	s.Push(15)
+	s.Push(16)
+	s.Push(17)
+	r.Equal(8, s.Len())
+
+	require.Equal(t, []int{12, 11, 10, 14, 13, 17, 16, 15}, s.PopN(8))
+	requirePopEmpty(t, s)
+}

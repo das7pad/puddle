@@ -27,6 +27,21 @@ func (s *stack[T]) pop() T {
 	return val
 }
 
+// popN pops the stack n top-most elements into dst.
+//
+// If the stack length is lower than n, this method panics.
+// The result is invalid after any other stack operation.
+func (s *stack[T]) popN(dst []T, n int) {
+	last := s.len() - 1
+	var zero T
+	for i := 0; i < n; i++ {
+		dst[i] = s.arr[last-i]
+		// Avoid memory leak
+		s.arr[last-i] = zero
+	}
+	s.arr = s.arr[:s.len()-n]
+}
+
 // takeAll returns all elements in the stack in order as they are stored - i.e.
 // the top-most stack element is the last one.
 func (s *stack[T]) takeAll() []T {

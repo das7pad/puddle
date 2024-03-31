@@ -31,7 +31,7 @@ func NewGenStack[T any]() *GenStack[T] {
 
 func (s *GenStack[T]) Pop() (T, bool) {
 	// Pushes always append to the new stack, so if the old once becomes
-	// empty, it will remail empty forever.
+	// empty, it will remain empty forever.
 	if s.old.len() == 0 && s.old != s.new {
 		s.old = s.new
 	}
@@ -42,6 +42,19 @@ func (s *GenStack[T]) Pop() (T, bool) {
 	}
 
 	return s.old.pop(), true
+}
+
+// PopN pops the stack n top-most elements.
+// If the stack length is lower than n, this method panics.
+func (s *GenStack[T]) PopN(n int) []T {
+	v := make([]T, n)
+	m := s.old.len()
+	if m > n {
+		m = n
+	}
+	s.old.popN(v, m)
+	s.new.popN(v[m:], n-m)
+	return v
 }
 
 // Push pushes a new element at the top of the stack.

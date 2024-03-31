@@ -15,10 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/puddle/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/semaphore"
+
+	"github.com/jackc/puddle/v2"
 )
 
 type Counter struct {
